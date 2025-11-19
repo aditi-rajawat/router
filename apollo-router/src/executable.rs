@@ -496,11 +496,6 @@ impl Executable {
             "Apollo Router v{}-http2-header-limit-patch // (c) Apollo Graph, Inc. // Licensed as ELv2 (https://go.apollo.dev/elv2)",
             std::env!("CARGO_PKG_VERSION")
         );
-        
-        // Log patch information
-        tracing::info!("🔧 PATCHED VERSION: HTTP/2 header limit fix applied");
-        tracing::info!("   - http2_max_header_list_size configuration is now available");
-        tracing::info!("   - Fixes 431 errors for large headers on HTTP/2 connections");
 
         // Schema source will be in order of precedence:
         // 1. Cli --supergraph

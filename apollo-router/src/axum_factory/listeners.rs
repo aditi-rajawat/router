@@ -212,12 +212,27 @@ macro_rules! handle_connection {
             // the connection finished first
             res = &mut connection => {
                 if let Err(err) = res {
-                    // Log connection-level errors (including HTTP/2 protocol errors like 431)
-                    tracing::warn!(
-                        connection_id = %connection_id,
-                        error = %err,
-                        "[LISTENER] Connection error - likely 431 due to header size limit"
-                    );
+                    // Log connection-level errors (HTTP/2 protocol errors, timeouts, etc.)
+                    let error_string = err.to_string();
+                    if error_string.contains("timeout") {
+                        tracing::warn!(
+                            connection_id = %connection_id,
+                            error = %err,
+                            "[LISTENER] Connection error - timeout (check header_read_timeout or network latency)"
+                        );
+                    } else if error_string.contains("max_header_list_size") || error_string.contains("header") {
+                        tracing::warn!(
+                            connection_id = %connection_id,
+                            error = %err,
+                            "[LISTENER] Connection error - likely 431 due to header size limit"
+                        );
+                    } else {
+                        tracing::warn!(
+                            connection_id = %connection_id,
+                            error = %err,
+                            "[LISTENER] Connection error"
+                        );
+                    }
                 } else {
                     tracing::info!(
                         connection_id = %connection_id,

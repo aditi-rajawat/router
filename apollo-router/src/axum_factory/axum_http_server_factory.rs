@@ -397,41 +397,7 @@ where
 }
 
 async fn metrics_handler(request: Request<axum::body::Body>, next: Next) -> Response {
-    // Extract request information for logging (clone what we need before moving request)
-    let tid = request.headers().get("intuit_tid")
-        .or_else(|| request.headers().get("x-request-id"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    
-    // Calculate total header size (approximate)
-    let total_header_size: usize = request.headers().iter()
-        .map(|(name, value)| name.as_str().len() + value.len())
-        .sum();
-    
-    let header_count = request.headers().len();
-    let method = request.method().clone();
-    let uri = request.uri().clone();
-    
-    tracing::info!(
-        tid = %tid,
-        method = %method,
-        uri = %uri,
-        header_count = header_count,
-        total_header_size = total_header_size,
-        "Incoming request"
-    );
-    
     let resp = next.run(request).await;
-    let status = resp.status();
-    
-    tracing::info!(
-        tid = %tid,
-        status_code = status.as_u16(),
-        status_reason = ?status.canonical_reason(),
-        "Response sent"
-    );
-    
     u64_counter!(
         "apollo.router.operations",
         "The number of graphql operations performed by the Router",

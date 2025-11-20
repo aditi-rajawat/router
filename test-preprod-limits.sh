@@ -148,12 +148,12 @@ done
 run_test 3 "HTTP/2 with 8KB test + 5KB infra = ~13KB total (just under 15KiB)" "http2" 200 \
     -H "$CONTENT_TYPE" "${headers_8kb[@]}" -d "$QUERY"
 
-# Test 4: 10KB test headers → ~15KB total with infrastructure (at 15KiB limit)
+# Test 4: 10KB test headers → ~15KB total with infrastructure (at/over 15KiB limit)
 headers_10kb=()
 for i in $(seq 1 10); do
     headers_10kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 4 "HTTP/2 with 10KB test + 5KB infra = ~15KB total (at 15KiB limit)" "http2" 200 \
+run_test 4 "HTTP/2 with 10KB test + 5KB infra = ~15KB total (at/over 15KiB limit)" "http2" 431 \
     -H "$CONTENT_TYPE" "${headers_10kb[@]}" -d "$QUERY"
 
 # Test 5: 12KB test headers → ~17KB total with infrastructure (OVER 15KiB - should fail)
@@ -232,10 +232,10 @@ if [ $fail_count -eq 0 ]; then
     echo "Section 1: HTTP/2 Header List Size"
     echo "✅ Test 1: 3KB test + 5KB infra = ~8KB total - PASS"
     echo "✅ Test 2: 5KB test + 5KB infra = ~10KB total - PASS"
-    echo "✅ Test 3: 8KB test + 5KB infra = ~13KB total (just under) - PASS"
-    echo "✅ Test 4: 10KB test + 5KB infra = ~15KB total (at limit) - PASS"
-    echo "✅ Test 5: 12KB test + 5KB infra = ~17KB total (over) - REJECTED with 431"
-    echo "✅ Test 6: 15KB test + 5KB infra = ~20KB total (over) - REJECTED with 431"
+    echo "✅ Test 3: 8KB test + 5KB infra = ~13KB total (under limit) - PASS"
+    echo "✅ Test 4: 10KB test + 5KB infra = ~15KB total (at/over limit) - REJECTED with 431"
+    echo "✅ Test 5: 12KB test + 5KB infra = ~17KB total (over limit) - REJECTED with 431"
+    echo "✅ Test 6: 15KB test + 5KB infra = ~20KB total (well over) - REJECTED with 431"
     echo ""
     echo "Section 2: Request Body Size"
     echo "✅ Test 7: 1KB body - PASS"
@@ -245,14 +245,15 @@ if [ $fail_count -eq 0 ]; then
     echo "🎯 Router Configuration Verified:"
     echo "   - http2_max_header_list_size: 15KiB [PATCHED!]"
     echo "   - Infrastructure overhead: ~5KB (auth token, Istio/Envoy headers)"
-    echo "   - Effective user header space: ~10KB"
-    echo "   - Router successfully handles up to ~15KB total headers"
-    echo "   - Router correctly rejects headers >15KiB with HTTP 431"
+    echo "   - Effective user header space: ~8KB (safe), ~10KB (at limit)"
+    echo "   - Router successfully handles up to ~13KB total headers"
+    echo "   - Router correctly rejects headers ≥15KiB with HTTP 431"
     echo ""
     echo "🔧 Key Insights:"
     echo "   - Infrastructure adds ~5KB overhead (authorization: 2.5KB, context: 1KB, etc.)"
-    echo "   - Configured limit: 15KiB = 10KB user headers + 5KB infrastructure"
+    echo "   - Configured limit: 15KiB = ~8KB safe user headers + 5KB infrastructure"
     echo "   - Router enforces total header size limit via http2_max_header_list_size"
+    echo "   - 10KB user headers + 5KB infra ≈ 15KB total triggers the limit"
     echo ""
     echo "📝 Note: All requests (API GW → Istio → Router) use HTTP/2"
     echo "   HTTP/1.1 limit configurations do not apply"

@@ -207,39 +207,14 @@ macro_rules! handle_connection {
         let connection_shutdown_timeout = $connection_shutdown_timeout;
         let received_first_request = $received_first_request;
         let connection_id = $connection_id;
-        tokio::pin!(connection);
-        tokio::select! {
-            // the connection finished first
-            res = &mut connection => {
-                if let Err(err) = res {
-                    // Log connection-level errors (HTTP/2 protocol errors, timeouts, etc.)
-                    let error_string = err.to_string();
-                    if error_string.contains("timeout") {
-                        tracing::warn!(
-                            connection_id = %connection_id,
-                            error = %err,
-                            "[LISTENER] Connection error - timeout (check header_read_timeout or network latency)"
-                        );
-                    } else if error_string.contains("max_header_list_size") || error_string.contains("header") {
-                        tracing::warn!(
-                            connection_id = %connection_id,
-                            error = %err,
-                            "[LISTENER] Connection error - likely 431 due to header size limit"
-                        );
-                    } else {
-                        tracing::warn!(
-                            connection_id = %connection_id,
-                            error = %err,
-                            "[LISTENER] Connection error"
-                        );
-                    }
-                } else {
-                    tracing::info!(
-                        connection_id = %connection_id,
-                        "[LISTENER] Connection closed successfully"
-                    );
-                }
-            }
+                        tokio::pin!(connection);
+                        tokio::select! {
+                            // the connection finished first
+                            res = &mut connection => {
+                                if let Err(err) = res {
+                                    tracing::debug!("{:?}", err);
+                                }
+                            }
             // the shutdown receiver was triggered first,
             // so we tell the connection to do a graceful shutdown
             // on the next request, then we wait for it to finish
@@ -402,68 +377,8 @@ pub(super) fn serve_router_on_listen_addr(
                                         let connection_id = format!("tcp-{}", uuid::Uuid::new_v4());
                                         
                                         let tokio_stream = TokioIo::new(stream);
-                                        let conn_id = connection_id.clone();
                                         let hyper_service = hyper::service::service_fn(move |request: http::Request<hyper::body::Incoming>| {
-                                            let conn_id = conn_id.clone();
-                                            // Log request at the lowest level (before any processing)
-                                            // Clone the values we need before moving request
-                                            let tid = request.headers().get("intuit_tid")
-                                                .or_else(|| request.headers().get("x-request-id"))
-                                                .and_then(|v| v.to_str().ok())
-                                                .map(|s| s.to_string())
-                                                .unwrap_or_else(|| "unknown".to_string());
-                                            
-                                            let total_header_size: usize = request.headers().iter()
-                                                .map(|(name, value)| name.as_str().len() + value.len())
-                                                .sum();
-                                            
-                                            let header_count = request.headers().len();
-                                            let method = request.method().clone();
-                                            let uri = request.uri().clone();
-                                            
-                                            // Collect header names and their sizes
-                                            let header_details: Vec<String> = request.headers().iter()
-                                                .map(|(name, value)| {
-                                                    format!("{}:{}b", name.as_str(), name.as_str().len() + value.len())
-                                                })
-                                                .collect();
-                                            let header_list = header_details.join(", ");
-                                            
-                                            tracing::info!(
-                                                connection_id = %conn_id,
-                                                tid = %tid,
-                                                method = %method,
-                                                uri = %uri,
-                                                header_count = header_count,
-                                                total_header_size = total_header_size,
-                                                headers = %header_list,
-                                                "[LISTENER] Request received at connection layer"
-                                            );
-                                            
-                                            let fut = app.clone().call(request);
-                                            async move {
-                                                let result = fut.await;
-                                                match result {
-                                                    Ok(response) => {
-                                                        tracing::info!(
-                                                            connection_id = %conn_id,
-                                                            tid = %tid,
-                                                            status_code = response.status().as_u16(),
-                                                            "[LISTENER] Response sent from connection layer"
-                                                        );
-                                                        Ok(response)
-                                                    }
-                                                    Err(err) => {
-                                                        tracing::error!(
-                                                            connection_id = %conn_id,
-                                                            tid = %tid,
-                                                            error = %err,
-                                                            "[LISTENER] Error in connection layer"
-                                                        );
-                                                        Err(err)
-                                                    }
-                                                }
-                                            }
+                                            app.clone().call(request)
                                         });
 
                                         let mut builder = Builder::new(TokioExecutor::new());
@@ -471,21 +386,8 @@ pub(super) fn serve_router_on_listen_addr(
                                         // Configure HTTP/2 settings first (via http2() sub-builder)
                                         // The auto builder will use these settings when HTTP/2 is negotiated
                                         if let Some(max_header_list_size) = opt_http2_max_header_list_size {
-                                            tracing::info!(
-                                                max_header_list_size = %max_header_list_size,
-                                                "[LISTENER] Configuring HTTP/2 max_header_list_size"
-                                            );
                                             builder.http2().max_header_list_size(max_header_list_size.as_u64() as u32);
                                         }
-                                        
-                                        // For plain TCP, we can't detect HTTP/2 via ALPN (no TLS handshake)
-                                        // The auto builder will detect HTTP/2 via the connection preface
-                                        // Log that we're ready for both HTTP/1.1 and HTTP/2
-                                        tracing::info!(
-                                            connection_id = %connection_id,
-                                            http2_max_header_list_size = ?opt_http2_max_header_list_size,
-                                            "[LISTENER] New TCP connection - auto-detecting HTTP/1.1 or HTTP/2"
-                                        );
                                         
                                         // Configure HTTP/1 settings
                                         let mut http_connection = builder.http1();
@@ -498,28 +400,14 @@ pub(super) fn serve_router_on_listen_addr(
                                         // Note: These will only apply if the connection uses HTTP/1.1
                                         // For HTTP/2 connections, max_header_list_size (configured above) will apply
                                         if let Some(max_headers) = opt_max_headers {
-                                            tracing::info!(
-                                                max_headers = max_headers,
-                                                "[LISTENER] Configuring HTTP/1 max_headers limit (will apply only if HTTP/1.1 is detected)"
-                                            );
                                             http_config.max_headers(max_headers);
                                         }
                                         if let Some(max_buf_size) = opt_max_buf_size {
-                                            tracing::info!(
-                                                max_buf_size = %max_buf_size,
-                                                "[LISTENER] Configuring HTTP/1 max_buf_size limit (will apply only if HTTP/1.1 is detected)"
-                                            );
                                             http_config.max_buf_size(max_buf_size.as_u64() as usize);
                                         }
                                         
                                         let connection = http_config
                                             .serve_connection_with_upgrades(tokio_stream, hyper_service);
-                                        
-                                        // Log when connection starts serving
-                                        tracing::info!(
-                                            connection_id = %connection_id,
-                                            "[LISTENER] Connection ready to serve requests"
-                                        );
                                         
                                         handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request, connection_id);
                                     }
@@ -562,68 +450,8 @@ pub(super) fn serve_router_on_listen_addr(
                                         let connection_id = format!("tls-{}", uuid::Uuid::new_v4());
                                         
                                         let tokio_stream = TokioIo::new(stream);
-                                        let conn_id = connection_id.clone();
                                         let hyper_service = hyper::service::service_fn(move |request: http::Request<hyper::body::Incoming>| {
-                                            let conn_id = conn_id.clone();
-                                            // Log request at the lowest level (before any processing)
-                                            // Clone the values we need before moving request
-                                            let tid = request.headers().get("intuit_tid")
-                                                .or_else(|| request.headers().get("x-request-id"))
-                                                .and_then(|v| v.to_str().ok())
-                                                .map(|s| s.to_string())
-                                                .unwrap_or_else(|| "unknown".to_string());
-                                            
-                                            let total_header_size: usize = request.headers().iter()
-                                                .map(|(name, value)| name.as_str().len() + value.len())
-                                                .sum();
-                                            
-                                            let header_count = request.headers().len();
-                                            let method = request.method().clone();
-                                            let uri = request.uri().clone();
-                                            
-                                            // Collect header names and their sizes
-                                            let header_details: Vec<String> = request.headers().iter()
-                                                .map(|(name, value)| {
-                                                    format!("{}:{}b", name.as_str(), name.as_str().len() + value.len())
-                                                })
-                                                .collect();
-                                            let header_list = header_details.join(", ");
-                                            
-                                            tracing::info!(
-                                                connection_id = %conn_id,
-                                                tid = %tid,
-                                                method = %method,
-                                                uri = %uri,
-                                                header_count = header_count,
-                                                total_header_size = total_header_size,
-                                                headers = %header_list,
-                                                "[LISTENER] Request received at connection layer"
-                                            );
-                                            
-                                            let fut = app.clone().call(request);
-                                            async move {
-                                                let result = fut.await;
-                                                match result {
-                                                    Ok(response) => {
-                                                        tracing::info!(
-                                                            connection_id = %conn_id,
-                                                            tid = %tid,
-                                                            status_code = response.status().as_u16(),
-                                                            "[LISTENER] Response sent from connection layer"
-                                                        );
-                                                        Ok(response)
-                                                    }
-                                                    Err(err) => {
-                                                        tracing::error!(
-                                                            connection_id = %conn_id,
-                                                            tid = %tid,
-                                                            error = %err,
-                                                            "[LISTENER] Error in connection layer"
-                                                        );
-                                                        Err(err)
-                                                    }
-                                                }
-                                            }
+                                            app.clone().call(request)
                                         });
 
                                         let mut builder = Builder::new(TokioExecutor::new());
@@ -631,21 +459,11 @@ pub(super) fn serve_router_on_listen_addr(
                                         // Configure HTTP/2 settings first (via http2() sub-builder)
                                         // The auto builder will use these settings when HTTP/2 is negotiated
                                         if let Some(max_header_list_size) = opt_http2_max_header_list_size {
-                                            tracing::info!(
-                                                max_header_list_size = %max_header_list_size,
-                                                "[LISTENER] Configuring HTTP/2 max_header_list_size"
-                                            );
                                             builder.http2().max_header_list_size(max_header_list_size.as_u64() as u32);
                                         }
                                         
                                         // Detect HTTP/2 via ALPN
                                         let is_http2 = tokio_stream.inner().get_ref().1.alpn_protocol() == Some(&b"h2"[..]);
-                                        tracing::info!(
-                                            connection_id = %connection_id,
-                                            is_http2 = is_http2,
-                                            http2_max_header_list_size = ?opt_http2_max_header_list_size,
-                                            "[LISTENER] New TLS connection - protocol detected via ALPN"
-                                        );
                                         if is_http2 {
                                             builder = builder.http2_only();
                                         }
@@ -661,31 +479,15 @@ pub(super) fn serve_router_on_listen_addr(
                                         // For HTTP/2, these limits don't apply - HTTP/2 uses max_header_list_size instead
                                         if !is_http2 {
                                             if let Some(max_headers) = opt_max_headers {
-                                                tracing::info!(
-                                                    max_headers = max_headers,
-                                                    "[LISTENER] Applying HTTP/1 max_headers limit"
-                                                );
                                                 http_config.max_headers(max_headers);
                                             }
                                             if let Some(max_buf_size) = opt_max_buf_size {
-                                                tracing::info!(
-                                                    max_buf_size = %max_buf_size,
-                                                    "[LISTENER] Applying HTTP/1 max_buf_size limit"
-                                                );
                                                 http_config.max_buf_size(max_buf_size.as_u64() as usize);
                                             }
-                                        } else {
-                                            tracing::info!("[LISTENER] HTTP/2 connection - skipping HTTP/1 limits");
                                         }
                                         
                                         let connection = http_config
                                             .serve_connection_with_upgrades(tokio_stream, hyper_service);
-                                        
-                                        // Log when connection starts serving
-                                        tracing::info!(
-                                            connection_id = %connection_id,
-                                            "[LISTENER] Connection ready to serve requests"
-                                        );
                                         
                                         handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request, connection_id);
                                     }

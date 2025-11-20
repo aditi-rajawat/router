@@ -171,19 +171,6 @@ impl Plugin for LimitsPlugin {
     where
         Self: Sized,
     {
-        // Log HTTP limits configuration (especially the new HTTP/2 header limit)
-        tracing::info!("Limits plugin configuration:");
-        if let Some(max_headers) = init.config.http1_max_request_headers {
-            tracing::info!("  - http1_max_request_headers: {}", max_headers);
-        }
-        if let Some(max_buf_size) = init.config.http1_max_request_buf_size {
-            tracing::info!("  - http1_max_request_buf_size: {}", max_buf_size);
-        }
-        if let Some(max_header_list_size) = init.config.http2_max_header_list_size {
-            tracing::info!("  - http2_max_header_list_size: {} [PATCH: HTTP/2 header limit fix]", max_header_list_size);
-        }
-        tracing::info!("  - http_max_request_bytes: {}", init.config.http_max_request_bytes);
-        
         Ok(LimitsPlugin {
             config: init.config,
         })

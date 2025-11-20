@@ -383,8 +383,8 @@ pub(super) fn serve_router_on_listen_addr(
                                                 "this should not fail unless the socket is invalid",
                                             );
 
-                                        // Generate a unique connection ID for tracking
-                                        let connection_id = uuid::Uuid::new_v4().to_string();
+                                        // Generate a unique connection ID for tracking (with tcp prefix)
+                                        let connection_id = format!("tcp-{}", uuid::Uuid::new_v4());
                                         
                                         let tokio_stream = TokioIo::new(stream);
                                         let conn_id = connection_id.clone();
@@ -521,7 +521,7 @@ pub(super) fn serve_router_on_listen_addr(
                                             http_config.max_buf_size(max_buf_size.as_u64() as usize);
                                         }
                                         let connection = http_config.serve_connection_with_upgrades(tokio_stream, hyper_service);
-                                        let connection_id = "unix-conn".to_string();
+                                        let connection_id = format!("unix-{}", uuid::Uuid::new_v4());
                                         handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request, connection_id);
                                     },
                                     NetworkStream::Tls(stream) => {
@@ -534,8 +534,8 @@ pub(super) fn serve_router_on_listen_addr(
                                                 "this should not fail unless the socket is invalid",
                                             );
 
-                                        // Generate a unique connection ID for tracking
-                                        let connection_id = uuid::Uuid::new_v4().to_string();
+                                        // Generate a unique connection ID for tracking (with tls prefix)
+                                        let connection_id = format!("tls-{}", uuid::Uuid::new_v4());
                                         
                                         let tokio_stream = TokioIo::new(stream);
                                         let conn_id = connection_id.clone();
@@ -611,7 +611,7 @@ pub(super) fn serve_router_on_listen_addr(
                                             connection_id = %connection_id,
                                             is_http2 = is_http2,
                                             http2_max_header_list_size = ?opt_http2_max_header_list_size,
-                                            "[LISTENER] New connection - protocol detected via ALPN"
+                                            "[LISTENER] New TLS connection - protocol detected via ALPN"
                                         );
                                         if is_http2 {
                                             builder = builder.http2_only();

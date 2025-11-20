@@ -382,26 +382,121 @@ pub(super) fn serve_router_on_listen_addr(
                                             .expect(
                                                 "this should not fail unless the socket is invalid",
                                             );
+
+                                        // Generate a unique connection ID for tracking
+                                        let connection_id = uuid::Uuid::new_v4().to_string();
+                                        
                                         let tokio_stream = TokioIo::new(stream);
-                                        let hyper_service = hyper::service::service_fn(move |request| {
-                                            app.clone().call(request)
+                                        let conn_id = connection_id.clone();
+                                        let hyper_service = hyper::service::service_fn(move |request: http::Request<hyper::body::Incoming>| {
+                                            let conn_id = conn_id.clone();
+                                            // Log request at the lowest level (before any processing)
+                                            // Clone the values we need before moving request
+                                            let tid = request.headers().get("intuit_tid")
+                                                .or_else(|| request.headers().get("x-request-id"))
+                                                .and_then(|v| v.to_str().ok())
+                                                .map(|s| s.to_string())
+                                                .unwrap_or_else(|| "unknown".to_string());
+                                            
+                                            let total_header_size: usize = request.headers().iter()
+                                                .map(|(name, value)| name.as_str().len() + value.len())
+                                                .sum();
+                                            
+                                            let header_count = request.headers().len();
+                                            let method = request.method().clone();
+                                            let uri = request.uri().clone();
+                                            
+                                            tracing::info!(
+                                                connection_id = %conn_id,
+                                                tid = %tid,
+                                                method = %method,
+                                                uri = %uri,
+                                                header_count = header_count,
+                                                total_header_size = total_header_size,
+                                                "[LISTENER] Request received at connection layer"
+                                            );
+                                            
+                                            let fut = app.clone().call(request);
+                                            async move {
+                                                let result = fut.await;
+                                                match result {
+                                                    Ok(response) => {
+                                                        tracing::info!(
+                                                            connection_id = %conn_id,
+                                                            tid = %tid,
+                                                            status_code = response.status().as_u16(),
+                                                            "[LISTENER] Response sent from connection layer"
+                                                        );
+                                                        Ok(response)
+                                                    }
+                                                    Err(err) => {
+                                                        tracing::error!(
+                                                            connection_id = %conn_id,
+                                                            tid = %tid,
+                                                            error = %err,
+                                                            "[LISTENER] Error in connection layer"
+                                                        );
+                                                        Err(err)
+                                                    }
+                                                }
+                                            }
                                         });
 
                                         let mut builder = Builder::new(TokioExecutor::new());
+                                        
+                                        // Configure HTTP/2 settings first (via http2() sub-builder)
+                                        // The auto builder will use these settings when HTTP/2 is negotiated
+                                        if let Some(max_header_list_size) = opt_http2_max_header_list_size {
+                                            tracing::info!(
+                                                max_header_list_size = %max_header_list_size,
+                                                "[LISTENER] Configuring HTTP/2 max_header_list_size"
+                                            );
+                                            builder.http2().max_header_list_size(max_header_list_size.as_u64() as u32);
+                                        }
+                                        
+                                        // For plain TCP, we can't detect HTTP/2 via ALPN (no TLS handshake)
+                                        // The auto builder will detect HTTP/2 via the connection preface
+                                        // Log that we're ready for both HTTP/1.1 and HTTP/2
+                                        tracing::info!(
+                                            connection_id = %connection_id,
+                                            http2_max_header_list_size = ?opt_http2_max_header_list_size,
+                                            "[LISTENER] New TCP connection - auto-detecting HTTP/1.1 or HTTP/2"
+                                        );
+                                        
+                                        // Configure HTTP/1 settings
                                         let mut http_connection = builder.http1();
                                         let http_config = http_connection
-                                                         .keep_alive(true)
-                                                         .timer(TokioTimer::new())
-                                                         .header_read_timeout(header_read_timeout);
+                                            .keep_alive(true)
+                                            .timer(TokioTimer::new())
+                                            .header_read_timeout(header_read_timeout);
+                                        
+                                        // Apply HTTP/1-specific limits
+                                        // Note: These will only apply if the connection uses HTTP/1.1
+                                        // For HTTP/2 connections, max_header_list_size (configured above) will apply
                                         if let Some(max_headers) = opt_max_headers {
+                                            tracing::info!(
+                                                max_headers = max_headers,
+                                                "[LISTENER] Configuring HTTP/1 max_headers limit (will apply only if HTTP/1.1 is detected)"
+                                            );
                                             http_config.max_headers(max_headers);
                                         }
-
                                         if let Some(max_buf_size) = opt_max_buf_size {
+                                            tracing::info!(
+                                                max_buf_size = %max_buf_size,
+                                                "[LISTENER] Configuring HTTP/1 max_buf_size limit (will apply only if HTTP/1.1 is detected)"
+                                            );
                                             http_config.max_buf_size(max_buf_size.as_u64() as usize);
                                         }
-                                        let connection = http_config.serve_connection_with_upgrades(tokio_stream, hyper_service);
-                                        let connection_id = "tcp-conn".to_string();
+                                        
+                                        let connection = http_config
+                                            .serve_connection_with_upgrades(tokio_stream, hyper_service);
+                                        
+                                        // Log when connection starts serving
+                                        tracing::info!(
+                                            connection_id = %connection_id,
+                                            "[LISTENER] Connection ready to serve requests"
+                                        );
+                                        
                                         handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request, connection_id);
                                     }
                                     #[cfg(unix)]

@@ -421,6 +421,14 @@ pub(super) fn serve_router_on_listen_addr(
                                             let method = request.method().clone();
                                             let uri = request.uri().clone();
                                             
+                                            // Collect header names and their sizes
+                                            let header_details: Vec<String> = request.headers().iter()
+                                                .map(|(name, value)| {
+                                                    format!("{}:{}b", name.as_str(), name.as_str().len() + value.len())
+                                                })
+                                                .collect();
+                                            let header_list = header_details.join(", ");
+                                            
                                             tracing::info!(
                                                 connection_id = %conn_id,
                                                 tid = %tid,
@@ -428,6 +436,7 @@ pub(super) fn serve_router_on_listen_addr(
                                                 uri = %uri,
                                                 header_count = header_count,
                                                 total_header_size = total_header_size,
+                                                headers = %header_list,
                                                 "[LISTENER] Request received at connection layer"
                                             );
                                             
@@ -572,6 +581,14 @@ pub(super) fn serve_router_on_listen_addr(
                                             let method = request.method().clone();
                                             let uri = request.uri().clone();
                                             
+                                            // Collect header names and their sizes
+                                            let header_details: Vec<String> = request.headers().iter()
+                                                .map(|(name, value)| {
+                                                    format!("{}:{}b", name.as_str(), name.as_str().len() + value.len())
+                                                })
+                                                .collect();
+                                            let header_list = header_details.join(", ");
+                                            
                                             tracing::info!(
                                                 connection_id = %conn_id,
                                                 tid = %tid,
@@ -579,6 +596,7 @@ pub(super) fn serve_router_on_listen_addr(
                                                 uri = %uri,
                                                 header_count = header_count,
                                                 total_header_size = total_header_size,
+                                                headers = %header_list,
                                                 "[LISTENER] Request received at connection layer"
                                             );
                                             

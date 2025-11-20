@@ -104,7 +104,7 @@ echo "Target Environment: PRE-PRODUCTION"
 echo "URL: $ROUTER_URL"
 echo ""
 echo "Expected Configuration:"
-echo "  - http2_max_header_list_size: 20KiB (Router)"
+echo "  - http2_max_header_list_size: 10KiB (Router)"
 echo "  - http_max_request_bytes: 2MB (default)"
 echo ""
 echo "NOTE: All requests (API GW → Istio → Router) use HTTP/2"
@@ -117,64 +117,56 @@ echo ""
 # SECTION 1: HTTP/2 Header List Size Limit
 # ==========================================
 echo -e "${BLUE}=========================================="
-echo "SECTION 1: http2_max_header_list_size (20KiB)"
+echo "SECTION 1: http2_max_header_list_size (10KiB)"
 echo -e "==========================================${NC}"
 echo ""
 
-# Test 1: 5KB total using 5 x 1KB headers
+# Test 1: 3KB total using 3 x 1KB headers (well under 10KiB limit)
+headers_3kb=()
+for i in $(seq 1 3); do
+    headers_3kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
+done
+run_test 1 "HTTP/2 with 3KB total (3 x 1KB headers, well under 10KiB limit)" "http2" 200 \
+    -H "$CONTENT_TYPE" "${headers_3kb[@]}" -d "$QUERY"
+
+# Test 2: 5KB total using 5 x 1KB headers (under 10KiB limit)
 headers_5kb=()
 for i in $(seq 1 5); do
     headers_5kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 1 "HTTP/2 with 5KB total (5 x 1KB headers, under AWS limits)" "http2" 200 \
+run_test 2 "HTTP/2 with 5KB total (5 x 1KB headers, under 10KiB limit)" "http2" 200 \
     -H "$CONTENT_TYPE" "${headers_5kb[@]}" -d "$QUERY"
 
-# Test 2: 10KB total using 10 x 1KB headers
-headers_10kb=()
-for i in $(seq 1 10); do
-    headers_10kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
+# Test 3: 8KB total using 8 x 1KB headers (just under 10KiB limit)
+headers_8kb=()
+for i in $(seq 1 8); do
+    headers_8kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 2 "HTTP/2 with 10KB total (10 x 1KB headers, at AWS limit)" "http2" 200 \
-    -H "$CONTENT_TYPE" "${headers_10kb[@]}" -d "$QUERY"
+run_test 3 "HTTP/2 with 8KB total (8 x 1KB headers, just under 10KiB limit)" "http2" 200 \
+    -H "$CONTENT_TYPE" "${headers_8kb[@]}" -d "$QUERY"
 
-# Test 3: 15KB total using 15 x 1KB headers (under 20KiB limit)
+# Test 4: 12KB total using 12 x 1KB headers (over 10KiB limit - should fail)
+headers_12kb=()
+for i in $(seq 1 12); do
+    headers_12kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
+done
+run_test 4 "HTTP/2 with 12KB total (12 x 1KB headers, over 10KiB limit)" "http2" 431 \
+    -H "$CONTENT_TYPE" "${headers_12kb[@]}" -d "$QUERY"
+
+# Test 5: 15KB total using 15 x 1KB headers (well over 10KiB limit - should fail)
 headers_15kb=()
 for i in $(seq 1 15); do
     headers_15kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 3 "HTTP/2 with 15KB total (15 x 1KB headers, under 20KiB limit)" "http2" 200 \
+run_test 5 "HTTP/2 with 15KB total (15 x 1KB headers, well over 10KiB limit)" "http2" 431 \
     -H "$CONTENT_TYPE" "${headers_15kb[@]}" -d "$QUERY"
 
-# Test 4: 19KB total using 19 x 1KB headers (just under 20KiB limit)
-headers_19kb=()
-for i in $(seq 1 19); do
-    headers_19kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
-done
-run_test 4 "HTTP/2 with 19KB total (19 x 1KB headers, just under 20KiB limit)" "http2" 200 \
-    -H "$CONTENT_TYPE" "${headers_19kb[@]}" -d "$QUERY"
-
-# Test 5: 25KB total using 25 x 1KB headers (over 20KiB limit - should fail)
-headers_25kb=()
-for i in $(seq 1 25); do
-    headers_25kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
-done
-run_test 5 "HTTP/2 with 25KB total (25 x 1KB headers, over 20KiB limit)" "http2" 431 \
-    -H "$CONTENT_TYPE" "${headers_25kb[@]}" -d "$QUERY"
-
-# Test 6: 30KB total using 30 x 1KB headers (well over 20KiB limit - should fail)
-headers_30kb=()
-for i in $(seq 1 30); do
-    headers_30kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
-done
-run_test 6 "HTTP/2 with 30KB total (30 x 1KB headers, well over 20KiB limit)" "http2" 431 \
-    -H "$CONTENT_TYPE" "${headers_30kb[@]}" -d "$QUERY"
-
-# Test 7: Test with many headers (header count handling)
+# Test 6: Test with many headers (header count handling)
 headers_40=()
 for i in $(seq 1 40); do
     headers_40+=("-H" "X-Header-$i: value$i")
 done
-run_test 7 "HTTP/2 with 40 headers (testing header count handling)" "http2" 200 \
+run_test 6 "HTTP/2 with 40 headers (testing header count handling)" "http2" 200 \
     -H "$CONTENT_TYPE" "${headers_40[@]}" -d "$QUERY"
 
 # ==========================================
@@ -233,31 +225,30 @@ echo ""
 if [ $fail_count -eq 0 ]; then
     echo -e "${GREEN}🎉 ALL TESTS PASSED!${NC}"
     echo ""
+    echo "✅ 3KB total headers (3 x 1KB) - PASS"
     echo "✅ 5KB total headers (5 x 1KB) - PASS"
-    echo "✅ 10KB total headers (10 x 1KB) - PASS"
-    echo "✅ 15KB total headers (15 x 1KB) - PASS"
-    echo "✅ 19KB total headers (19 x 1KB, just under limit) - PASS"
-    echo "✅ 25KB total headers (25 x 1KB, over limit) - REJECTED with 431"
-    echo "✅ 30KB total headers (30 x 1KB, over limit) - REJECTED with 431"
+    echo "✅ 8KB total headers (8 x 1KB, just under limit) - PASS"
+    echo "✅ 12KB total headers (12 x 1KB, over limit) - REJECTED with 431"
+    echo "✅ 15KB total headers (15 x 1KB, over limit) - REJECTED with 431"
     echo "✅ http_max_request_bytes (2MB) working correctly"
     echo "✅ Header count handling verified (40 headers work)"
     echo ""
     echo "🎯 Router Configuration Verified:"
-    echo "   - http2_max_header_list_size: 20KiB [PATCHED!]"
-    echo "   - Router successfully handles up to ~19KB total headers"
-    echo "   - Router correctly rejects headers >20KiB with HTTP 431"
+    echo "   - http2_max_header_list_size: 10KiB [PATCHED!]"
+    echo "   - Router successfully handles up to ~8KB total headers"
+    echo "   - Router correctly rejects headers >10KiB with HTTP 431"
     echo "   - Multiple small headers bypass AWS per-header limits"
     echo ""
     echo "🔧 Strategy Used:"
     echo "   - Using multiple 1KB headers instead of one large header"
     echo "   - Each header stays under AWS per-header limit (10-16KB)"
-    echo "   - Total size tests router's aggregate limit (20KiB)"
+    echo "   - Total size tests router's aggregate limit (10KiB)"
     echo ""
     echo "📝 Note: All requests (API GW → Istio → Router) use HTTP/2"
     echo "   HTTP/1.1 limit configurations do not apply"
     echo ""
     echo "✨ Router patch is working correctly!"
-    echo "   Successfully enforcing the configured 20KiB limit"
+    echo "   Successfully enforcing the configured 10KiB limit"
     echo ""
     exit 0
 else

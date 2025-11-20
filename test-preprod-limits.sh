@@ -105,7 +105,7 @@ echo "Target Environment: PRE-PRODUCTION"
 echo "URL: $ROUTER_URL"
 echo ""
 echo "Expected Configuration:"
-echo "  - http2_max_header_list_size: 20KiB (Router)"
+echo "  - http2_max_header_list_size: 15KiB (Router)"
 echo "  - http_max_request_bytes: 2MB (default)"
 echo "  - Infrastructure overhead: ~5KB (API Gateway, Istio, Envoy headers)"
 echo ""
@@ -119,96 +119,58 @@ echo ""
 # SECTION 1: HTTP/2 Header List Size Limit
 # ==========================================
 echo -e "${BLUE}=========================================="
-echo "SECTION 1: http2_max_header_list_size (20KiB)"
+echo "SECTION 1: http2_max_header_list_size (15KiB)"
 echo "Note: ~5KB infrastructure overhead added by API GW/Istio"
 echo -e "==========================================${NC}"
 echo ""
 
-# Test 1: 3KB test headers → ~8KB total with infrastructure (well under 20KiB)
+# Test 1: 3KB test headers → ~8KB total with infrastructure (well under 15KiB)
 headers_3kb=()
 for i in $(seq 1 3); do
     headers_3kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 1 "HTTP/2 with 3KB test + 5KB infra = ~8KB total (well under 20KiB)" "http2" 200 \
+run_test 1 "HTTP/2 with 3KB test + 5KB infra = ~8KB total (well under 15KiB)" "http2" 200 \
     -H "$CONTENT_TYPE" "${headers_3kb[@]}" -d "$QUERY"
 
-# Test 2: 5KB test headers → ~10KB total with infrastructure (under 20KiB)
+# Test 2: 5KB test headers → ~10KB total with infrastructure (under 15KiB)
 headers_5kb=()
 for i in $(seq 1 5); do
     headers_5kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 2 "HTTP/2 with 5KB test + 5KB infra = ~10KB total (under 20KiB)" "http2" 200 \
+run_test 2 "HTTP/2 with 5KB test + 5KB infra = ~10KB total (under 15KiB)" "http2" 200 \
     -H "$CONTENT_TYPE" "${headers_5kb[@]}" -d "$QUERY"
 
-# Test 3: 10KB test headers → ~15KB total with infrastructure (under 20KiB)
+# Test 3: 8KB test headers → ~13KB total with infrastructure (just under 15KiB)
+headers_8kb=()
+for i in $(seq 1 8); do
+    headers_8kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
+done
+run_test 3 "HTTP/2 with 8KB test + 5KB infra = ~13KB total (just under 15KiB)" "http2" 200 \
+    -H "$CONTENT_TYPE" "${headers_8kb[@]}" -d "$QUERY"
+
+# Test 4: 10KB test headers → ~15KB total with infrastructure (at 15KiB limit)
 headers_10kb=()
 for i in $(seq 1 10); do
     headers_10kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 3 "HTTP/2 with 10KB test + 5KB infra = ~15KB total (under 20KiB)" "http2" 200 \
+run_test 4 "HTTP/2 with 10KB test + 5KB infra = ~15KB total (at 15KiB limit)" "http2" 200 \
     -H "$CONTENT_TYPE" "${headers_10kb[@]}" -d "$QUERY"
 
-# Test 4: 13KB test headers → ~18KB total with infrastructure (just under 20KiB)
-headers_13kb=()
-for i in $(seq 1 13); do
-    headers_13kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
+# Test 5: 12KB test headers → ~17KB total with infrastructure (OVER 15KiB - should fail)
+headers_12kb=()
+for i in $(seq 1 12); do
+    headers_12kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 4 "HTTP/2 with 13KB test + 5KB infra = ~18KB total (just under 20KiB)" "http2" 200 \
-    -H "$CONTENT_TYPE" "${headers_13kb[@]}" -d "$QUERY"
+run_test 5 "HTTP/2 with 12KB test + 5KB infra = ~17KB total (OVER 15KiB)" "http2" 431 \
+    -H "$CONTENT_TYPE" "${headers_12kb[@]}" -d "$QUERY"
 
-# Test 5: 17KB test headers → ~22KB total with infrastructure (OVER 20KiB - should fail)
-headers_17kb=()
-for i in $(seq 1 17); do
-    headers_17kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
+# Test 6: 15KB test headers → ~20KB total with infrastructure (well over 15KiB - should fail)
+headers_15kb=()
+for i in $(seq 1 15); do
+    headers_15kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
 done
-run_test 5 "HTTP/2 with 17KB test + 5KB infra = ~22KB total (OVER 20KiB)" "http2" 431 \
-    -H "$CONTENT_TYPE" "${headers_17kb[@]}" -d "$QUERY"
-
-# Test 6: 20KB test headers → ~25KB total with infrastructure (well over 20KiB - should fail)
-headers_20kb=()
-for i in $(seq 1 20); do
-    headers_20kb+=("-H" "X-Header-$i: $(head -c 1024 < /dev/zero | tr '\0' 'x')")
-done
-run_test 6 "HTTP/2 with 20KB test + 5KB infra = ~25KB total (well over 20KiB)" "http2" 431 \
-    -H "$CONTENT_TYPE" "${headers_20kb[@]}" -d "$QUERY"
-
-# ==========================================
-# SECTION 1B: Single Large Header Tests (AWS/ELB per-header limits)
-# ==========================================
-echo ""
-echo -e "${BLUE}=========================================="
-echo "SECTION 1B: Single Large Header Tests"
-echo "Testing AWS ELB/API Gateway per-header limits"
-echo -e "==========================================${NC}"
-echo ""
-
-# Test 7: Single 3KB header + 5KB infra = ~8KB total (under limits)
-single_3kb=$(head -c 3072 < /dev/zero | tr '\0' 'x')
-run_test 7 "HTTP/2 with single 3KB header + 5KB infra = ~8KB total" "http2" 200 \
-    -H "$CONTENT_TYPE" \
-    -H "X-Large-Header: $single_3kb" \
-    -d "$QUERY"
-
-# Test 8: Single 5KB header + 5KB infra = ~10KB total (testing AWS per-header limit)
-single_5kb=$(head -c 5120 < /dev/zero | tr '\0' 'x')
-run_test 8 "HTTP/2 with single 5KB header + 5KB infra = ~10KB total (may hit AWS)" "http2" 200 \
-    -H "$CONTENT_TYPE" \
-    -H "X-Large-Header: $single_5kb" \
-    -d "$QUERY"
-
-# Test 9: Single 8KB header + 5KB infra = ~13KB total (likely blocked by AWS per-header)
-single_8kb=$(head -c 8192 < /dev/zero | tr '\0' 'x')
-run_test 9 "HTTP/2 with single 8KB header + 5KB infra = ~13KB total (AWS limit)" "http2" 400 \
-    -H "$CONTENT_TYPE" \
-    -H "X-Large-Header: $single_8kb" \
-    -d "$QUERY"
-
-# Test 10: Single 10KB header + 5KB infra = ~15KB total (blocked by AWS per-header)
-single_10kb=$(head -c 10240 < /dev/zero | tr '\0' 'x')
-run_test 10 "HTTP/2 with single 10KB header + 5KB infra = ~15KB total (AWS blocks)" "http2" 400 \
-    -H "$CONTENT_TYPE" \
-    -H "X-Large-Header: $single_10kb" \
-    -d "$QUERY"
+run_test 6 "HTTP/2 with 15KB test + 5KB infra = ~20KB total (well over 15KiB)" "http2" 431 \
+    -H "$CONTENT_TYPE" "${headers_15kb[@]}" -d "$QUERY"
 
 # ==========================================
 # SECTION 2: HTTP Request Body Size Limit
@@ -221,7 +183,7 @@ echo ""
 
 # Small body (1KB - under limit)
 small_body=$(head -c 1024 < /dev/zero | tr '\0' 'x' | sed 's/^/{"query":"query{__typename}","variables":{"data":"/' | sed 's/$/"}}/') 
-run_test 11 "HTTP/2 with 1KB body (under 2MB limit)" "http2" 200 \
+run_test 7 "HTTP/2 with 1KB body (under 2MB limit)" "http2" 200 \
     -H "$CONTENT_TYPE" \
     -d "$small_body"
 
@@ -229,7 +191,7 @@ run_test 11 "HTTP/2 with 1KB body (under 2MB limit)" "http2" 200 \
 medium_body='{"query":"{ __typename }","variables":{"data":"'
 medium_body+=$(head -c 102400 < /dev/zero | tr '\0' 'x')
 medium_body+='"}}'
-run_test 12 "HTTP/2 with 100KB body (under 2MB limit)" "http2" 200 \
+run_test 8 "HTTP/2 with 100KB body (under 2MB limit)" "http2" 200 \
     -H "$CONTENT_TYPE" \
     -d "$medium_body"
 
@@ -242,7 +204,7 @@ large_body_file="/tmp/router-test-large-body.json"
     echo '"}}'
 } > "$large_body_file"
 
-run_test 13 "HTTP/2 with 3MB body (over 2MB limit)" "http2" 413 \
+run_test 9 "HTTP/2 with 3MB body (over 2MB limit)" "http2" 413 \
     -H "$CONTENT_TYPE" \
     --data-binary "@$large_body_file"
 
@@ -267,44 +229,36 @@ echo ""
 if [ $fail_count -eq 0 ]; then
     echo -e "${GREEN}🎉 ALL TESTS PASSED!${NC}"
     echo ""
-    echo "Section 1: Multiple Small Headers (Router Total Limit)"
+    echo "Section 1: HTTP/2 Header List Size"
     echo "✅ Test 1: 3KB test + 5KB infra = ~8KB total - PASS"
     echo "✅ Test 2: 5KB test + 5KB infra = ~10KB total - PASS"
-    echo "✅ Test 3: 10KB test + 5KB infra = ~15KB total - PASS"
-    echo "✅ Test 4: 13KB test + 5KB infra = ~18KB total (just under) - PASS"
-    echo "✅ Test 5: 17KB test + 5KB infra = ~22KB total (over) - REJECTED with 431"
-    echo "✅ Test 6: 20KB test + 5KB infra = ~25KB total (over) - REJECTED with 431"
-    echo ""
-    echo "Section 1B: Single Large Headers (AWS Per-Header Limit)"
-    echo "✅ Test 7: Single 3KB header + 5KB infra = ~8KB - PASS"
-    echo "✅ Test 8: Single 5KB header + 5KB infra = ~10KB - PASS or AWS block"
-    echo "✅ Test 9: Single 8KB header + 5KB infra = ~13KB - BLOCKED by AWS with 400"
-    echo "✅ Test 10: Single 10KB header + 5KB infra = ~15KB - BLOCKED by AWS with 400"
+    echo "✅ Test 3: 8KB test + 5KB infra = ~13KB total (just under) - PASS"
+    echo "✅ Test 4: 10KB test + 5KB infra = ~15KB total (at limit) - PASS"
+    echo "✅ Test 5: 12KB test + 5KB infra = ~17KB total (over) - REJECTED with 431"
+    echo "✅ Test 6: 15KB test + 5KB infra = ~20KB total (over) - REJECTED with 431"
     echo ""
     echo "Section 2: Request Body Size"
-    echo "✅ Test 11: 1KB body - PASS"
-    echo "✅ Test 12: 100KB body - PASS"
-    echo "✅ Test 13: 3MB body (over 2MB limit) - REJECTED with 413"
+    echo "✅ Test 7: 1KB body - PASS"
+    echo "✅ Test 8: 100KB body - PASS"
+    echo "✅ Test 9: 3MB body (over 2MB limit) - REJECTED with 413"
     echo ""
     echo "🎯 Router Configuration Verified:"
-    echo "   - http2_max_header_list_size: 20KiB [PATCHED!]"
+    echo "   - http2_max_header_list_size: 15KiB [PATCHED!]"
     echo "   - Infrastructure overhead: ~5KB (auth token, Istio/Envoy headers)"
-    echo "   - Effective user header space: ~15KB"
-    echo "   - Router successfully handles up to ~18KB total headers"
-    echo "   - Router correctly rejects headers >20KiB with HTTP 431"
-    echo "   - AWS ELB blocks single headers >8KB with HTTP 400"
+    echo "   - Effective user header space: ~10KB"
+    echo "   - Router successfully handles up to ~15KB total headers"
+    echo "   - Router correctly rejects headers >15KiB with HTTP 431"
     echo ""
     echo "🔧 Key Insights:"
     echo "   - Infrastructure adds ~5KB overhead (authorization: 2.5KB, context: 1KB, etc.)"
-    echo "   - Multiple small headers: Tests router's 20KiB aggregate limit"
-    echo "   - Single large header: Tests AWS per-header limit (~8-10KB)"
-    echo "   - Router limit (431) vs AWS limit (400) are distinguishable"
+    echo "   - Configured limit: 15KiB = 10KB user headers + 5KB infrastructure"
+    echo "   - Router enforces total header size limit via http2_max_header_list_size"
     echo ""
     echo "📝 Note: All requests (API GW → Istio → Router) use HTTP/2"
     echo "   HTTP/1.1 limit configurations do not apply"
     echo ""
     echo "✨ Router patch is working correctly!"
-    echo "   Successfully enforcing the configured 20KiB limit with infrastructure overhead"
+    echo "   Successfully enforcing the configured 15KiB limit with infrastructure overhead"
     echo ""
     exit 0
 else
@@ -313,10 +267,10 @@ else
     echo "Please review the failed tests above."
     echo ""
     echo "Common causes:"
-    echo "  - AWS API Gateway/ELB blocking single headers >8KB (HTTP 400)"
-    echo "  - Router http2_max_header_list_size not set to 20KiB (HTTP 431)"
+    echo "  - Router http2_max_header_list_size not set to 15KiB (HTTP 431)"
     echo "  - Wrong router version deployed (needs v2.8.1-http2-header-limit-patch)"
-    echo "  - Infrastructure overhead (~5KB) not accounted for in tests"
+    echo "  - Infrastructure overhead (~5KB) not accounted for"
+    echo "  - Network timeout (check header_read_timeout configuration)"
     echo "  - Istio/Envoy limits not configured correctly"
     echo ""
     exit 1

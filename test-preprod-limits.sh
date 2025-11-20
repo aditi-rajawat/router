@@ -170,8 +170,47 @@ run_test 6 "HTTP/2 with 40 headers (testing header count handling)" "http2" 200 
     -H "$CONTENT_TYPE" "${headers_40[@]}" -d "$QUERY"
 
 # ==========================================
+# SECTION 1B: Single Large Header Tests (AWS/ELB per-header limits)
+# ==========================================
+echo ""
+echo -e "${BLUE}=========================================="
+echo "SECTION 1B: Single Large Header Tests"
+echo "Testing AWS ELB/API Gateway per-header limits"
+echo -e "==========================================${NC}"
+echo ""
+
+# Test 7: Single 5KB header (under typical AWS limits)
+single_5kb=$(head -c 5120 < /dev/zero | tr '\0' 'x')
+run_test 7 "HTTP/2 with single 5KB header" "http2" 200 \
+    -H "$CONTENT_TYPE" \
+    -H "X-Large-Header: $single_5kb" \
+    -d "$QUERY"
+
+# Test 8: Single 8KB header (under 10KiB router limit, testing AWS limits)
+single_8kb=$(head -c 8192 < /dev/zero | tr '\0' 'x')
+run_test 8 "HTTP/2 with single 8KB header (may hit AWS per-header limit)" "http2" 200 \
+    -H "$CONTENT_TYPE" \
+    -H "X-Large-Header: $single_8kb" \
+    -d "$QUERY"
+
+# Test 9: Single 10KB header (at AWS per-header limit)
+single_10kb=$(head -c 10240 < /dev/zero | tr '\0' 'x')
+run_test 9 "HTTP/2 with single 10KB header (likely blocked by AWS)" "http2" 400 \
+    -H "$CONTENT_TYPE" \
+    -H "X-Large-Header: $single_10kb" \
+    -d "$QUERY"
+
+# Test 10: Single 12KB header (over AWS per-header limit)
+single_12kb=$(head -c 12288 < /dev/zero | tr '\0' 'x')
+run_test 10 "HTTP/2 with single 12KB header (blocked by AWS)" "http2" 400 \
+    -H "$CONTENT_TYPE" \
+    -H "X-Large-Header: $single_12kb" \
+    -d "$QUERY"
+
+# ==========================================
 # SECTION 2: HTTP Request Body Size Limit
 # ==========================================
+echo ""
 echo -e "${BLUE}=========================================="
 echo "SECTION 2: http_max_request_bytes (2MB default)"
 echo -e "==========================================${NC}"
@@ -179,7 +218,7 @@ echo ""
 
 # Small body (1KB - under limit)
 small_body=$(head -c 1024 < /dev/zero | tr '\0' 'x' | sed 's/^/{"query":"query{__typename}","variables":{"data":"/' | sed 's/$/"}}/') 
-run_test 8 "HTTP/2 with 1KB body (under 2MB limit)" "http2" 200 \
+run_test 11 "HTTP/2 with 1KB body (under 2MB limit)" "http2" 200 \
     -H "$CONTENT_TYPE" \
     -d "$small_body"
 
@@ -187,7 +226,7 @@ run_test 8 "HTTP/2 with 1KB body (under 2MB limit)" "http2" 200 \
 medium_body='{"query":"{ __typename }","variables":{"data":"'
 medium_body+=$(head -c 102400 < /dev/zero | tr '\0' 'x')
 medium_body+='"}}'
-run_test 9 "HTTP/2 with 100KB body (under 2MB limit)" "http2" 200 \
+run_test 12 "HTTP/2 with 100KB body (under 2MB limit)" "http2" 200 \
     -H "$CONTENT_TYPE" \
     -d "$medium_body"
 
@@ -200,7 +239,7 @@ large_body_file="/tmp/router-test-large-body.json"
     echo '"}}'
 } > "$large_body_file"
 
-run_test 10 "HTTP/2 with 3MB body (over 2MB limit)" "http2" 413 \
+run_test 13 "HTTP/2 with 3MB body (over 2MB limit)" "http2" 413 \
     -H "$CONTENT_TYPE" \
     --data-binary "@$large_body_file"
 
@@ -225,24 +264,35 @@ echo ""
 if [ $fail_count -eq 0 ]; then
     echo -e "${GREEN}🎉 ALL TESTS PASSED!${NC}"
     echo ""
+    echo "Section 1: Multiple Small Headers (Router Total Limit)"
     echo "✅ 3KB total headers (3 x 1KB) - PASS"
     echo "✅ 5KB total headers (5 x 1KB) - PASS"
     echo "✅ 8KB total headers (8 x 1KB, just under limit) - PASS"
     echo "✅ 12KB total headers (12 x 1KB, over limit) - REJECTED with 431"
     echo "✅ 15KB total headers (15 x 1KB, over limit) - REJECTED with 431"
-    echo "✅ http_max_request_bytes (2MB) working correctly"
     echo "✅ Header count handling verified (40 headers work)"
+    echo ""
+    echo "Section 1B: Single Large Headers (AWS Per-Header Limit)"
+    echo "✅ Single 5KB header - PASS"
+    echo "✅ Single 8KB header - PASS or AWS block"
+    echo "✅ Single 10KB header - BLOCKED by AWS with 400"
+    echo "✅ Single 12KB header - BLOCKED by AWS with 400"
+    echo ""
+    echo "Section 2: Request Body Size"
+    echo "✅ 1KB body - PASS"
+    echo "✅ 100KB body - PASS"
+    echo "✅ 3MB body (over 2MB limit) - REJECTED with 413"
     echo ""
     echo "🎯 Router Configuration Verified:"
     echo "   - http2_max_header_list_size: 10KiB [PATCHED!]"
     echo "   - Router successfully handles up to ~8KB total headers"
     echo "   - Router correctly rejects headers >10KiB with HTTP 431"
-    echo "   - Multiple small headers bypass AWS per-header limits"
+    echo "   - AWS ELB blocks single headers >8-10KB with HTTP 400"
     echo ""
-    echo "🔧 Strategy Used:"
-    echo "   - Using multiple 1KB headers instead of one large header"
-    echo "   - Each header stays under AWS per-header limit (10-16KB)"
-    echo "   - Total size tests router's aggregate limit (10KiB)"
+    echo "🔧 Key Insights:"
+    echo "   - Multiple small headers: Tests router's aggregate limit (10KiB)"
+    echo "   - Single large header: Tests AWS per-header limit (~8-10KB)"
+    echo "   - Router limit (431) vs AWS limit (400) are distinguishable"
     echo ""
     echo "📝 Note: All requests (API GW → Istio → Router) use HTTP/2"
     echo "   HTTP/1.1 limit configurations do not apply"

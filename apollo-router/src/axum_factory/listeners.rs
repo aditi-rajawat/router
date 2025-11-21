@@ -200,13 +200,12 @@ pub(super) async fn get_extra_listeners(
 // This macro unifies the logic tht deals with connections.
 // Ideally this would be a function, but the generics proved too difficult to figure out.
 macro_rules! handle_connection {
-    ($connection:expr, $connection_handle:expr, $connection_shutdown:expr, $connection_shutdown_timeout:expr, $received_first_request:expr, $connection_id:expr) => {
+    ($connection:expr, $connection_handle:expr, $connection_shutdown:expr, $connection_shutdown_timeout:expr, $received_first_request:expr) => {
         let connection = $connection;
         let mut connection_handle = $connection_handle;
         let connection_shutdown = $connection_shutdown;
         let connection_shutdown_timeout = $connection_shutdown_timeout;
         let received_first_request = $received_first_request;
-        let connection_id = $connection_id;
                         tokio::pin!(connection);
                         tokio::select! {
                             // the connection finished first
@@ -373,9 +372,6 @@ pub(super) fn serve_router_on_listen_addr(
                                                 "this should not fail unless the socket is invalid",
                                             );
 
-                                        // Generate a unique connection ID for tracking (with tcp prefix)
-                                        let connection_id = format!("tcp-{}", uuid::Uuid::new_v4());
-                                        
                                         let tokio_stream = TokioIo::new(stream);
                                         let hyper_service = hyper::service::service_fn(move |request: http::Request<hyper::body::Incoming>| {
                                             app.clone().call(request)
@@ -409,7 +405,7 @@ pub(super) fn serve_router_on_listen_addr(
                                         let connection = http_config
                                             .serve_connection_with_upgrades(tokio_stream, hyper_service);
                                         
-                                        handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request, connection_id);
+                                        handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request);
                                     }
                                     #[cfg(unix)]
                                     NetworkStream::Unix(stream) => {
@@ -433,8 +429,7 @@ pub(super) fn serve_router_on_listen_addr(
                                             http_config.max_buf_size(max_buf_size.as_u64() as usize);
                                         }
                                         let connection = http_config.serve_connection_with_upgrades(tokio_stream, hyper_service);
-                                        let connection_id = format!("unix-{}", uuid::Uuid::new_v4());
-                                        handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request, connection_id);
+                                        handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request);
                                     },
                                     NetworkStream::Tls(stream) => {
                                         let received_first_request = Arc::new(AtomicBool::new(false));
@@ -446,9 +441,6 @@ pub(super) fn serve_router_on_listen_addr(
                                                 "this should not fail unless the socket is invalid",
                                             );
 
-                                        // Generate a unique connection ID for tracking (with tls prefix)
-                                        let connection_id = format!("tls-{}", uuid::Uuid::new_v4());
-                                        
                                         let tokio_stream = TokioIo::new(stream);
                                         let hyper_service = hyper::service::service_fn(move |request: http::Request<hyper::body::Incoming>| {
                                             app.clone().call(request)
@@ -489,7 +481,7 @@ pub(super) fn serve_router_on_listen_addr(
                                         let connection = http_config
                                             .serve_connection_with_upgrades(tokio_stream, hyper_service);
                                         
-                                        handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request, connection_id);
+                                        handle_connection!(connection, connection_handle, connection_shutdown, connection_shutdown_timeout, received_first_request);
                                     }
                                 }
                             });
